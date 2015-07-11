@@ -887,12 +887,7 @@
        (or fn? js? goog?)
        (emits f "(" (comma-sep args)  ")")
        
-       :else
-       (if (and ana/*cljs-static-fns* (= (:op f) :var))
-         ;; higher order case, static information missing
-         (let [fprop (str ".cljs$core$IFn$_invoke$arity$" (count args))]
-           (emits "(" f fprop " ? " f fprop "(" (comma-sep args) ") : " f ".call(" (comma-sep (cons "null" args)) "))"))
-         (emits f ".call(" (comma-sep (cons "null" args)) ")"))))))
+       :else (emits f ".call(" (comma-sep (cons "null" args)) ")")))))
 
 (defmethod emit* :new
   [{:keys [ctor args env]}]

@@ -2034,17 +2034,8 @@
       (warning :invoke-ctor env {:fexpr fexpr}))
     (let [ana-expr #(analyze enve %)
           argexprs (map ana-expr args)]
-      (if (or (not (boolean *cljs-static-fns*))
-              (not (symbol? f))
-              fn-var?
-              (analyzed? f)
-              (all-values? argexprs))
-        {:env env :op :invoke :form form :f fexpr :args (vec argexprs)
-         :children (into [fexpr] argexprs)}
-        (let [arg-syms (take argc (repeatedly gensym))]
-          (analyze env
-            `(let [~@(vec (interleave arg-syms args))]
-               (~(vary-meta f assoc ::analyzed true) ~@arg-syms))))))))
+      {:env env :op :invoke :form form :f fexpr :args (vec argexprs)
+       :children (into [fexpr] argexprs)})))
 
 (defn parse-invoke
   [env form]
