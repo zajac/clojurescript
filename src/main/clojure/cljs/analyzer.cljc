@@ -2412,7 +2412,8 @@
         tag        (if (js-tag? tag)
                      (with-meta 'js {:prefix (conj pre field)})
                      tag)]
-    (when (js-tag? tag)
+    (when (and (js-tag? tag)
+               (not (string/includes? (str (or field method)) "$")))
       (swap! env/*compiler* update-in
         (into [::namespaces (-> env :ns :name) :externs]
               (conj pre (or field method)))
