@@ -608,36 +608,38 @@
   ;; elimination issues. The REPL is the exception to this rule.
   (when (or init (:def-emits-var env))
     (let [mname (munge name)]
-     (emit-comment env doc (concat jsdoc (:jsdoc init)))
-     (when (:def-emits-var env)
-       (when (= :return (:context env))
-         (emitln "return ("))
-       (emitln "(function (){"))
-     (emits var)
-     (when init
-       (emits " = "
-         (if-let [define (get-define mname jsdoc)]
-           define
-           init)))
-     (when (:def-emits-var env)
-       (emitln "; return (")
-       (emits (merge
-                {:op  :var-special
-                 :env (assoc env :context :expr)}
-                var-ast))
-       (emitln ");})()")
-       (when (= :return (:context env))
-         (emitln ")")))
-     ;; NOTE: JavaScriptCore does not like this under advanced compilation
-     ;; this change was primarily for REPL interactions - David
-     ;(emits " = (typeof " mname " != 'undefined') ? " mname " : undefined")
-     (when-not (= :expr (:context env)) (emitln ";"))
-     (when export
-       (emitln "goog.exportSymbol('" (munge export) "', " mname ");"))
-     (when (and ana/*load-tests* test)
-       (when (= :expr (:context env))
-         (emitln ";"))
-       (emitln var ".cljs$lang$test = " test ";")))))
+      ;; TODO: check if fn var, if so generate js docs for js-tag?
+      ;; parameters - David
+      (emit-comment env doc (concat jsdoc (:jsdoc init)))
+      (when (:def-emits-var env)
+        (when (= :return (:context env))
+          (emitln "return ("))
+        (emitln "(function (){"))
+      (emits var)
+      (when init
+        (emits " = "
+          (if-let [define (get-define mname jsdoc)]
+            define
+            init)))
+      (when (:def-emits-var env)
+        (emitln "; return (")
+        (emits (merge
+                 {:op  :var-special
+                  :env (assoc env :context :expr)}
+                 var-ast))
+        (emitln ");})()")
+        (when (= :return (:context env))
+          (emitln ")")))
+      ;; NOTE: JavaScriptCore does not like this under advanced compilation
+      ;; this change was primarily for REPL interactions - David
+      ;(emits " = (typeof " mname " != 'undefined') ? " mname " : undefined")
+      (when-not (= :expr (:context env)) (emitln ";"))
+      (when export
+        (emitln "goog.exportSymbol('" (munge export) "', " mname ");"))
+      (when (and ana/*load-tests* test)
+        (when (= :expr (:context env))
+          (emitln ";"))
+        (emitln var ".cljs$lang$test = " test ";")))))
 
 (defn emit-apply-to
   [{:keys [name params env]}]
@@ -1452,6 +1454,32 @@
                   (str "Cannot emit constant for type " (type sym))
                   {:error :invalid-constant-type})))
       (emits ";\n"))))
+
+(defn emit-externs
+  ([externs]
+   (emit-externs [] externs (atom #{})))
+  ([prefix externs top-level]
+   (loop [ks (seq (keys externs))]
+     (when ks
+       (let [k (first ks)
+             [top :as prefix'] (conj prefix k)]
+         (when-not (= 'prototype k)
+           (if-not (contains? @top-level top)
+             (do
+               (emitln "var " (string/join "." (map munge prefix')) ";")
+               (swap! top-level conj top))
+             (emitln (string/join "." (map munge prefix')) ";")))
+         (let [m (get externs k)]
+           (when-not (empty? m)
+             (emit-externs prefix' m top-level))))
+       (recur (next ks))))))
+
+#?(:clj
+   (defn emit-inferred-externs-to-file [externs dest]
+     (io/make-parents dest)
+     (with-open [out ^java.io.Writer (io/make-writer dest {})]
+       (binding [*out* out]
+         (emit-externs externs)))))
 
 #?(:clj
    (defn emit-constants-table-to-file [table dest]

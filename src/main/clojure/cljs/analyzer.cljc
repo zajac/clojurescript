@@ -735,6 +735,21 @@
                (= (.getName ns) #?(:clj 'cljs.core :cljs 'cljs.core$macros)))))
        (not (contains? (-> env :ns :excludes) sym))))
 
+(defn js-tag? [x]
+  (if (symbol? x)
+    (or (= 'js x)
+        (= "js" (namespace x)))
+    false))
+
+(defn normalize-js-tag [x]
+  (if-not (= 'js x)
+    (with-meta 'js
+      {:prefix (conj
+                 (->> (string/split (name x) #"\.")
+                   (map symbol) vec)
+                 'prototype)})
+    x))
+
 (defn resolve-var
   "Resolve a var. Accepts a side-effecting confirm fn for producing
    warnings about unresolved vars."
@@ -742,7 +757,13 @@
   ([env sym confirm]
      (if #?(:clj  (= "js" (namespace sym))
             :cljs (identical? "js" (namespace sym)))
-       {:name sym :ns 'js}
+       (let [pre (->> (string/split (name sym) #"\.")
+                   (map symbol) vec)]
+         (swap! env/*compiler* update-in
+           (into [::namespaces (-> env :ns :name) :externs] pre) merge {})
+         {:name sym
+          :ns 'js
+          :tag (with-meta 'js {:prefix pre})})
        (let [s    (str sym)
              lcls (:locals env)
              lb   (get lcls sym)]
@@ -2378,7 +2399,24 @@
         enve       (assoc env :context :expr)
         targetexpr (analyze enve target)
         form-meta  (meta form)
-        tag        (:tag form-meta)]
+        target-tag (:tag targetexpr)
+        tag        (or (:tag form-meta)
+                       (and (js-tag? target-tag)
+                            (normalize-js-tag target-tag))
+                       nil)
+        pre        (if (js-tag? tag)
+                     (let [pre (-> tag meta :prefix)]
+                       (if-not (empty? pre)
+                         pre                         '[Object prototype]))
+                     [])
+        tag        (if (js-tag? tag)
+                     (with-meta 'js {:prefix (conj pre field)})
+                     tag)]
+    (when (js-tag? tag)
+      (swap! env/*compiler* update-in
+        (into [::namespaces (-> env :ns :name) :externs]
+              (conj pre (or field method)))
+        merge {}))
     (case dot-action
       ::access (let [children [targetexpr]]
                  {:op :dot
@@ -2442,8 +2480,10 @@
   ;; when functions like first won't return nil, so variadic
   ;; numeric functions like cljs.core/< would produce a spurious
   ;; warning without this - David
-  (if (nil? t)
-    true
+  (cond
+    (nil? t) true
+    (js-tag? t) true
+    :else
     (if (and (symbol? t) (not (nil? (get NUMERIC_SET t))))
       true
       (when #?(:clj  (set? t)
@@ -3140,6 +3180,26 @@
                      analysis))))
       (when src
         (.setLastModified ^File cache-file (util/last-modified src))))))
+
+(defn analyze-form-seq
+  ([forms]
+   (analyze-form-seq forms nil))
+  ([forms opts]
+   (let [env (assoc (empty-env) :build-options opts)]
+     (binding [*file-defs* nil
+               *unchecked-if* false
+               *cljs-ns* 'cljs.user
+               *cljs-file* nil
+               reader/*alias-map* (or reader/*alias-map* {})]
+       (loop [ns nil forms forms]
+         (if forms
+           (let [form (first forms)
+                 env  (assoc env :ns (get-namespace *cljs-ns*))
+                 ast  (analyze env form nil opts)]
+             (if (= (:op ast) :ns)
+               (recur (:name ast) (next forms))
+               (recur ns (next forms))))
+           ns))))))
 
 #?(:clj
    (defn analyze-file

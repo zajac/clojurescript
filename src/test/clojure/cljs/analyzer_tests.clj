@@ -1,5 +1,6 @@
 (ns cljs.analyzer-tests
   (:require [clojure.java.io :as io]
+            [cljs.util :as util]
             [cljs.analyzer :as a]
             [cljs.env :as e]
             [cljs.env :as env]
@@ -456,3 +457,21 @@
            {:excludes #{}
             :renames {}}))
     (is (set? (:excludes parsed)))))
+
+(comment
+  (require '[cljs.compiler :as cc])
+
+  ;; empty?
+  (binding [a/*cljs-ns* a/*cljs-ns*]
+    (e/with-compiler-env test-cenv
+      (a/analyze-form-seq
+        '[(ns foo.core)
+          (defn bar [a b] (+ a b))
+          (def c js/React.Component)
+          (js/console.log "Hello world!")]))
+    (cc/emit-externs
+      (reduce util/map-merge {}
+        (map (comp :externs second)
+          (get @test-cenv ::a/namespaces)))))
+
+  )
