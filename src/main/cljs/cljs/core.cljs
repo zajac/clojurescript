@@ -9948,7 +9948,7 @@ reduces them without incurring seq initialization"
 
 (defn- prefers*
   [x y prefer-table]
-  (let [xprefs (@prefer-table x)]
+  (let [xprefs (prefer-table x)]
     (or
      (when (and xprefs (xprefs y))
        true)
@@ -9964,34 +9964,22 @@ reduces them without incurring seq initialization"
          (recur (rest ps))))
      false)))
 
-(defn- dominates
-  [x y prefer-table hierarchy]
-  (or (prefers* x y prefer-table) (isa? hierarchy x y)))
-
-(defn- find-and-cache-best-method
-  [name dispatch-val hierarchy method-table prefer-table method-cache cached-hierarchy]
-  (let [best-entry (reduce (fn [be [k _ :as e]]
-                             (if (isa? @hierarchy dispatch-val k)
-                               (let [be2 (if (or (nil? be) (dominates k (first be) prefer-table @hierarchy))
-                                           e
-                                           be)]
-                                 (when-not (dominates (first be2) k prefer-table @hierarchy)
-                                   (throw (js/Error.
-                                           (str "Multiple methods in multimethod '" name
-                                                "' match dispatch value: " dispatch-val " -> " k
-                                                " and " (first be2) ", and neither is preferred"))))
-                                 be2)
-                               be))
-                           nil @method-table)]
-    (when best-entry
-      (if (= @cached-hierarchy @hierarchy)
-        (do
-          (swap! method-cache assoc dispatch-val (second best-entry))
-          (second best-entry))
-        (do
-          (reset-cache method-cache method-table cached-hierarchy hierarchy)
-          (find-and-cache-best-method name dispatch-val hierarchy method-table prefer-table
-                                      method-cache cached-hierarchy))))))
+(defn- find-best-method [name dispatch-val method-table prefer-table hierarchy]
+  (letfn [(dominates? [x y] (or (prefers* x y prefer-table) (isa? hierarchy x y)))
+          (take-best [[x _ :as best-entry] [y _ :as entry]]
+            (let [[x _ :as best-entry] (if (or (nil? x) (dominates? y x))
+                                         entry
+                                         best-entry)]
+              (when-not (dominates? x y)
+                (throw (js/Error.
+                        (str "Multiple methods in multimethod '" name
+                             "' match dispatch value: " dispatch-val " -> " y
+                             " and " x ", and neither is preferred"))))
+              best-entry))]
+    (->> method-table
+         (filter (fn [[k _]] (isa? hierarchy dispatch-val k)))
+         (reduce take-best nil)
+         second)))
 
 (defprotocol IMultiFn
   (-reset [mf])
@@ -10166,13 +10154,14 @@ reduces them without incurring seq initialization"
       (reset-cache method-cache method-table cached-hierarchy hierarchy))
     (if-let [target-fn (@method-cache dispatch-val)]
       target-fn
-      (if-let [target-fn (find-and-cache-best-method name dispatch-val hierarchy method-table
-                                                     prefer-table method-cache cached-hierarchy)]
-        target-fn
+      (if-let [target-fn (find-best-method name dispatch-val @method-table @prefer-table @hierarchy)]
+        (do
+          (swap! method-cache assoc dispatch-val target-fn)
+          target-fn)
         (@method-table default-dispatch-val))))
 
   (-prefer-method [mf dispatch-val-x dispatch-val-y]
-    (when (prefers* dispatch-val-x dispatch-val-y prefer-table)
+    (when (prefers* dispatch-val-x dispatch-val-y @prefer-table)
       (throw (js/Error. (str "Preference conflict in multimethod '" name "': " dispatch-val-y
                    " is already preferred to " dispatch-val-x))))
     (swap! prefer-table
